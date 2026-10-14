@@ -95,10 +95,11 @@ def _coordinator(hass: HomeAssistant) -> BeeperCoordinator:
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(Path(__file__).parent / "frontend" / "beeper-chat-card.js"), False)]
-    )
-    add_extra_js_url(hass, CARD_URL)
+    card = Path(__file__).parent / "frontend" / "beeper-chat-card.js"
+    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(card), False)])
+    # The file's mtime in the URL makes browsers and the mobile apps fetch the card again after an update.
+    mtime = await hass.async_add_executor_job(lambda: int(card.stat().st_mtime))
+    add_extra_js_url(hass, f"{CARD_URL}?v={mtime}")
     for cmd in (ws_chats, ws_messages, ws_send, ws_mark_read):
         websocket_api.async_register_command(hass, cmd)
 
