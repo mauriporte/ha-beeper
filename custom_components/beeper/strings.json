@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Beeper Desktop",
+        "description": "Address of the Beeper Desktop API, for example http://192.168.1.50:23373, and an access token created in Beeper → Settings → Developers (read and write). Beeper Desktop must be running on that computer.",
+        "data": {
+          "url": "API address",
+          "token": "Access token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Beeper token refused",
+        "description": "Beeper Desktop refused the access token. Create a new one in Beeper → Settings → Developers.",
+        "data": {
+          "token": "Access token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Beeper refused the access token.",
+      "cannot_connect": "Cannot reach Beeper Desktop at that address. Is Beeper running and the computer on?"
+    },
+    "abort": {
+      "already_configured": "This Beeper Desktop is already configured.",
+      "reauth_successful": "The token was updated."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "unread": {
+        "name": "Unread messages"
+      }
+    }
+  },
+  "services": {
+    "send_message": {
+      "name": "Send message",
+      "description": "Sends a text message to a Beeper chat.",
+      "fields": {
+        "chat": {
+          "name": "Chat",
+          "description": "Chat title as shown in Beeper, or its chat ID."
+        },
+        "message": {
+          "name": "Message",
+          "description": "Text to send."
+        }
+      }
+    }
+  }
+}

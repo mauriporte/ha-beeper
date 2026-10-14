@@ -1,0 +1,13 @@
+send_message:
+  fields:
+    chat:
+      required: true
+      example: "Family"
+      selector:
+        text:
+    message:
+      required: true
+      example: "Running 10 minutes late"
+      selector:
+        text:
+          multiline: true

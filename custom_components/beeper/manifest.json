@@ -1,0 +1,15 @@
+{
+  "domain": "beeper",
+  "name": "Beeper",
+  "codeowners": [
+    "@mauriporte"
+  ],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "websocket_api"],
+  "documentation": "https://github.com/mauriporte/ha-beeper",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/mauriporte/ha-beeper/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
