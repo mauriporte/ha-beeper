@@ -37,7 +37,9 @@ const STYLE = `
   audio.media { width: 260px; max-width: 100%; height: 40px; background: none; }
   .file { display: inline-block; margin: 4px 0; }
   .reel-btn { display: block; margin: 6px 0 2px; padding: 6px 12px; font-size: .9em; }
-  .map { display: block; margin: 6px 0; width: 100%; max-width: 420px; height: 300px; border: 0; border-radius: 8px; }
+  .map { position: relative; display: block; margin: 6px 0; width: 260px; max-width: 100%; height: 170px; border-radius: 8px; overflow: hidden; background: rgba(127,127,127,.2); }
+  .map iframe { width: 100%; height: 100%; border: 0; pointer-events: none; }
+  .map a { position: absolute; inset: 0; }
   video.reel { max-width: 360px; max-height: 560px; background: #000; }
   .msg blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid currentColor; opacity: .85; }
   .msg p { margin: 0 0 4px; }
@@ -187,6 +189,8 @@ function mapLinks(text) {
   return [...out].filter(([, e]) => e);
 }
 
+// A small map under the link, like WhatsApp: loads as it scrolls into view; the preview itself isn't interactive
+// and a tap opens the place in Google Maps.
 function mapPlayer(url, embed, hass) {
   let src = embed;
   if (embed === "short") {
@@ -195,16 +199,20 @@ function mapPlayer(url, embed, hass) {
     const base = location.protocol === "https:" ? "" : (helper.lan || "");
     src = `${base}/vault-img/${encodeURIComponent(helper.key)}/maps?u=${encodeURIComponent(url)}`;
   }
-  const btn = el("button", "reel-btn", "🗺 Ver mapa");
-  btn.addEventListener("click", () => {
-    const f = el("iframe", "map");
-    f.src = src;
-    f.loading = "lazy";
-    f.referrerPolicy = "no-referrer-when-downgrade";
-    f.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox");
-    btn.replaceWith(f);
-  }, { once: true });
-  return btn;
+  const box = el("div", "map");
+  const f = el("iframe");
+  f.src = src;
+  f.loading = "lazy";
+  f.tabIndex = -1;
+  f.referrerPolicy = "no-referrer-when-downgrade";
+  f.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  const a = el("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = "Abrir en Google Maps";
+  box.append(f, a);
+  return box;
 }
 
 function fmtTime(iso) {
