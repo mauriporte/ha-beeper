@@ -39,15 +39,15 @@ class BeeperCoordinator(DataUpdateCoordinator[list[dict]]):
         self._seen: deque[str] = deque(maxlen=500)
         # Attachment URLs the card may fetch through /api/beeper/asset: only ones from messages it has loaded,
         # so the view can't be used to read other files from the PC running Beeper Desktop (file:// URLs).
-        self.assets: dict[str, None] = {}
+        self.assets: dict[str, str | None] = {}  # url -> MIME type from the message (Beeper serves octet-stream)
 
     def allow_assets(self, messages: list[dict]) -> None:
         for m in messages:
             for a in m["attachments"]:
-                for url in (a["url"], a["poster"]):
+                for url, mime in ((a["url"], a["mime"]), (a["poster"], "image/jpeg")):
                     if url:
                         self.assets.pop(url, None)
-                        self.assets[url] = None
+                        self.assets[url] = mime if mime and mime.split("/")[0] in ("image", "video", "audio") else None
         while len(self.assets) > 2000:
             self.assets.pop(next(iter(self.assets)))
 
@@ -250,6 +250,8 @@ class BeeperAssetView(HomeAssistantView):
             for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
                 if h in upstream.headers:
                     resp.headers[h] = upstream.headers[h]
+            if (mime := coordinator.assets[url]) and resp.headers.get("Content-Type", "").startswith("application/octet-stream"):
+                resp.headers["Content-Type"] = mime
             resp.headers["Cache-Control"] = "private, max-age=86400"
             resp.headers["X-Content-Type-Options"] = "nosniff"
             # files come from other people: an SVG or HTML one opened from HA's own origin must not run scripts there
