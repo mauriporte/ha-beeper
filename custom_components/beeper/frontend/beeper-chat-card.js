@@ -1,5 +1,6 @@
 // Beeper chat card: chat list + conversation + reply box, talking to the beeper integration over HA's WebSocket.
 // Message text and titles always go through textContent (never innerHTML): they come from other people.
+// Links are built as <a> elements (http/https only) and media load through the integration's signed asset URLs.
 
 const NETWORK_ICONS = {
   whatsapp: "mdi:whatsapp", telegram: "mdi:send", signal: "mdi:message-lock", instagram: "mdi:instagram",
@@ -27,6 +28,12 @@ const STYLE = `
   .msg.mine { align-self: flex-end; background: var(--primary-color); color: var(--text-primary-color); }
   .sender { font-size: 0.75em; font-weight: 600; opacity: 0.8; }
   .time { font-size: 0.7em; opacity: 0.7; text-align: right; }
+  .msg a { color: inherit; text-decoration: underline; word-break: break-all; }
+  .media { display: block; margin: 4px 0; max-width: 100%; max-height: 320px; border-radius: 8px; background: rgba(127,127,127,.15); }
+  img.media { width: auto; height: auto; cursor: zoom-in; }
+  .media.sticker { max-height: 140px; background: none; }
+  audio.media { width: 260px; max-width: 100%; height: 40px; background: none; }
+  .file { display: inline-block; margin: 4px 0; }
   .more { align-self: center; }
   .compose { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--divider-color); }
   textarea { flex: 1; resize: none; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
@@ -48,6 +55,28 @@ function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+const URL_RE = /https?:\/\/[^\s<>"']+/g;
+
+// Text with its web addresses as clickable links (built as elements, never as HTML).
+function textWithLinks(text) {
+  const box = el("div");
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    let url = m[0];
+    const trail = url.match(/[).,!?;:]+$/);  // "see https://x.com." → the dot is not part of the link
+    if (trail) url = url.slice(0, -trail[0].length);
+    box.append(text.slice(last, m.index));
+    const a = el("a", null, url);
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    box.append(a);
+    last = m.index + url.length;
+  }
+  box.append(text.slice(last));
+  return box;
 }
 
 function fmtTime(iso) {
@@ -206,11 +235,54 @@ class BeeperChatCard extends HTMLElement {
     for (const m of this._messages) {
       const b = el("div", "msg" + (m.mine ? " mine" : ""));
       if (group && !m.mine) b.appendChild(el("div", "sender", m.sender || ""));
-      b.appendChild(el("div", null, m.text));
+      for (const a of m.attachments || []) b.appendChild(this._media(a));
+      if (m.text) b.appendChild(textWithLinks(m.text));
       b.appendChild(el("div", "time", fmtTime(m.time) + (m.mine && m.status && m.status !== "SUCCESS" ? " · " + m.status.toLowerCase() : "")));
       this._msgs.appendChild(b);
     }
     if (scrollToEnd) this._msgs.scrollTop = this._msgs.scrollHeight;
+  }
+
+  // <img>/<video>/<audio> can't send HA's token, so each file gets a signed URL (valid 24 h, cached per file).
+  async _signed(url) {
+    this._signedUrls ??= new Map();
+    if (!this._signedUrls.has(url)) {
+      this._signedUrls.set(url, this._hass.callWS({
+        type: "auth/sign_path", path: "/api/beeper/asset?url=" + encodeURIComponent(url), expires: 86400,
+      }).then((r) => r.path));
+    }
+    return this._signedUrls.get(url);
+  }
+
+  _media(a) {
+    let node;
+    if (a.type === "img") {
+      node = el("img", "media" + (a.sticker ? " sticker" : ""));
+      node.loading = "lazy";
+      node.alt = a.name || "imagen";
+      if (a.width && a.height) { node.width = a.width; node.height = a.height; }  // keeps the layout still while loading
+      node.addEventListener("click", async () => window.open(await this._signed(a.url), "_blank", "noopener"));
+      node.style.cursor = "zoom-in";
+    } else if (a.type === "video") {
+      node = el("video", "media");
+      node.controls = true;
+      node.preload = "metadata";
+      node.playsInline = true;
+      if (a.gif) { node.autoplay = node.loop = node.muted = true; }
+      if (a.poster) this._signed(a.poster).then((p) => { node.poster = p; });
+    } else if (a.type === "audio") {
+      node = el("audio", "media");
+      node.controls = true;
+      node.preload = "none";
+    } else {
+      node = el("a", "file", "📎 " + (a.name || "archivo"));
+      node.target = "_blank";
+      node.rel = "noopener noreferrer";
+      this._signed(a.url).then((p) => { node.href = p; });
+      return node;
+    }
+    this._signed(a.url).then((p) => { node.src = p; }).catch(() => node.replaceWith(el("div", "time", "[no se pudo cargar]")));
+    return node;
   }
 
   async _sendMessage() {

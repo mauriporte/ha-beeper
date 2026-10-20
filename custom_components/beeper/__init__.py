@@ -8,9 +8,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
+from aiohttp import web
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
@@ -19,7 +20,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import AuthError, BeeperClient, BeeperError, summarize_chat, summarize_message
+from .api import AuthError, BeeperClient, BeeperError, _message_text, summarize_chat, summarize_message
 
 DOMAIN = "beeper"
 PLATFORMS = [Platform.SENSOR]
@@ -36,6 +37,19 @@ class BeeperCoordinator(DataUpdateCoordinator[list[dict]]):
         self.client = BeeperClient(async_get_clientsession(hass), entry.data[CONF_URL], entry.data[CONF_TOKEN])
         self._stop = asyncio.Event()
         self._seen: deque[str] = deque(maxlen=500)
+        # Attachment URLs the card may fetch through /api/beeper/asset: only ones from messages it has loaded,
+        # so the view can't be used to read other files from the PC running Beeper Desktop (file:// URLs).
+        self.assets: dict[str, None] = {}
+
+    def allow_assets(self, messages: list[dict]) -> None:
+        for m in messages:
+            for a in m["attachments"]:
+                for url in (a["url"], a["poster"]):
+                    if url:
+                        self.assets.pop(url, None)
+                        self.assets[url] = None
+        while len(self.assets) > 2000:
+            self.assets.pop(next(iter(self.assets)))
 
     async def _async_update_data(self) -> list[dict]:
         try:
@@ -76,7 +90,7 @@ class BeeperCoordinator(DataUpdateCoordinator[list[dict]]):
                     "network": chat.get("network"),
                     "message_id": m["id"],
                     "sender": m["sender"],
-                    "text": m["text"],
+                    "text": _message_text(msg),  # "[image]" etc. for media, as before
                 },
             )
 
@@ -102,6 +116,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     add_extra_js_url(hass, f"{CARD_URL}?v={mtime}")
     for cmd in (ws_chats, ws_messages, ws_send, ws_mark_read):
         websocket_api.async_register_command(hass, cmd)
+    hass.http.register_view(BeeperAssetView())
 
     async def send_message(call: ServiceCall) -> ServiceResponse:
         coordinator = _coordinator(hass)
@@ -161,10 +176,12 @@ async def ws_messages(hass: HomeAssistant, connection: websocket_api.ActiveConne
         connection.send_error(msg["id"], "beeper_error", str(err))
         return
     items = sorted(data.get("items", []), key=lambda m: m.get("sortKey") or m.get("timestamp") or "")
+    messages = [summarize_message(m) for m in items if not m.get("isHidden") and m.get("type") != "REACTION"]
+    _coordinator(hass).allow_assets(messages)
     connection.send_result(
         msg["id"],
         {
-            "messages": [summarize_message(m) for m in items if not m.get("isHidden") and m.get("type") != "REACTION"],
+            "messages": messages,
             "has_more": data.get("hasMore", False),
             "cursor": data.get("oldestCursor"),
         },
@@ -197,3 +214,50 @@ async def ws_mark_read(hass: HomeAssistant, connection: websocket_api.ActiveConn
         return
     await coordinator.async_request_refresh()
     connection.send_result(msg["id"])
+
+
+class BeeperAssetView(HomeAssistantView):
+    """Streams a message attachment (image, video, voice) from Beeper Desktop, which only listens on the PC.
+
+    The card loads it with a signed path (auth/sign_path), since <img>/<video>/<audio> can't send a token. Admins only,
+    like the WebSocket commands, and only URLs of attachments the card has been shown. Range requests pass through, so
+    videos and voice notes can seek.
+    """
+
+    url = "/api/beeper/asset"
+    name = "api:beeper:asset"
+
+    async def get(self, request: web.Request) -> web.StreamResponse:
+        hass = request.app["hass"]
+        user = request.get("hass_user")
+        if user is None or not user.is_admin:
+            raise web.HTTPForbidden
+        url = request.query.get("url", "")
+        try:
+            coordinator = _coordinator(hass)
+        except HomeAssistantError as err:
+            raise web.HTTPServiceUnavailable from err
+        if url not in coordinator.assets:
+            raise web.HTTPNotFound
+        try:
+            upstream = await coordinator.client.serve(url, request.headers.get("Range"))
+        except BeeperError as err:
+            raise web.HTTPBadGateway(text=str(err)) from err
+        try:
+            if upstream.status >= 400:
+                raise web.HTTPBadGateway(text=f"Beeper Desktop answered HTTP {upstream.status}")
+            resp = web.StreamResponse(status=upstream.status)
+            for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                if h in upstream.headers:
+                    resp.headers[h] = upstream.headers[h]
+            resp.headers["Cache-Control"] = "private, max-age=86400"
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+            # files come from other people: an SVG or HTML one opened from HA's own origin must not run scripts there
+            resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'"
+            await resp.prepare(request)
+            async for chunk in upstream.content.iter_chunked(64 * 1024):
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+        finally:
+            upstream.release()

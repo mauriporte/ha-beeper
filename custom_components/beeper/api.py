@@ -61,6 +61,21 @@ class BeeperClient:
             body["replyToMessageID"] = reply_to
         return await self._request("POST", f"/v1/chats/{_q(chat_id)}/messages", json=body)
 
+    async def serve(self, url: str, range_header: str | None = None) -> aiohttp.ClientResponse:
+        """Open a stream of an attachment (Beeper Desktop's /v1/assets/serve); the caller must release() it."""
+        headers = dict(self._headers)
+        if range_header:
+            headers["Range"] = range_header
+        try:
+            resp = await self._session.get(self.url + "/v1/assets/serve", params={"url": url}, headers=headers,
+                                           timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60))
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise BeeperError(f"Cannot reach Beeper Desktop at {self.url}: {err}") from err
+        if resp.status == 401:
+            resp.release()
+            raise AuthError("Beeper refused the access token")
+        return resp
+
     async def mark_read(self, chat_id: str) -> None:
         await self._request("POST", f"/v1/chats/{_q(chat_id)}/read", json={})
 
@@ -113,14 +128,41 @@ def summarize_chat(chat: dict) -> dict:
     }
 
 
+ASSET_SCHEMES = ("mxc://", "localmxc://", "file://")  # what Beeper Desktop's /v1/assets/serve accepts
+
+
 def summarize_message(msg: dict) -> dict:
+    attachments = [a for a in (_attachment(x) for x in msg.get("attachments") or []) if a]
     return {
         "id": msg["id"],
         "sender": msg.get("senderName") or msg.get("senderID"),
         "mine": msg.get("isSender", False),
         "time": msg.get("timestamp"),
-        "text": _message_text(msg),
+        # with attachments the card shows the media itself, so no "[image]" placeholder
+        "text": (msg.get("text") or "") if attachments and not msg.get("isDeleted") else _message_text(msg),
         "status": (msg.get("sendStatus") or {}).get("status"),
+        "attachments": attachments,
+    }
+
+
+def _attachment(a: dict) -> dict | None:
+    url = a.get("srcURL") or a.get("id") or ""
+    if not url.startswith(ASSET_SCHEMES):
+        return None
+    poster = a.get("posterImg") or ""
+    size = a.get("size") or {}
+    return {
+        "type": a.get("type") or "unknown",  # img, video, audio, unknown
+        "url": url,
+        "poster": poster if poster.startswith(ASSET_SCHEMES) else None,
+        "mime": a.get("mimeType"),
+        "name": a.get("fileName"),
+        "width": size.get("width"),
+        "height": size.get("height"),
+        "gif": a.get("isGif", False),
+        "sticker": a.get("isSticker", False),
+        "voice": a.get("isVoiceNote", False),
+        "duration": a.get("duration"),
     }
 
 

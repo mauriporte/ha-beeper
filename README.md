@@ -10,8 +10,13 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
 - **Event `beeper_message`** for each incoming message (`chat`, `chat_id`, `network`, `sender`, `text`, `message_id`). Your own messages do not fire it.
 - **Action `beeper.send_message`**: `chat` (title as shown in Beeper, or chat ID) and `message`.
 - **Card `custom:beeper-chat-card`**: chat list, conversation and reply box. It loads automatically; there is no resource to add. Options: `height` (default `560px`), `show_archived` (default `false`), `show_muted` (default `true`).
+  Images, GIFs, stickers, videos and voice notes show inside the messages (a tap on an image opens it full size), and
+  web addresses are clickable. Message text is never rendered as HTML: it comes from other people.
 
 The card and its WebSocket commands are available to admin users only, because they can read and send in every chat.
+Media go through `/api/beeper/asset`, also admin-only and loaded with short-lived signed URLs; it only serves
+attachments of messages the card has loaded (never arbitrary files from the PC running Beeper Desktop), and sends them
+with a sandbox Content-Security-Policy.
 
 ## Setup
 
