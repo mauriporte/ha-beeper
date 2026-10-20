@@ -17,6 +17,8 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
   Instagram reel/post links get a "▶ Ver reel" button that plays the video inline when a helper resolves the public
   video file (optional: an entity `sensor.vault_images` with `key` and `lan` attributes, serving
   `/vault-img/<key>/reel/<code>`; see instagram-saved-to-obsidian). Without it the link just opens Instagram.
+  Google Maps links get "🗺 Ver mapa": Google's keyless map embed under the message, loaded only when tapped (share
+  links like maps.app.goo.gl need the same helper, at `/vault-img/<key>/maps?u=<link>`).
 
 The card and its WebSocket commands are available to admin users only, because they can read and send in every chat.
 Media go through `/api/beeper/asset`, also admin-only and loaded with short-lived signed URLs; it only serves

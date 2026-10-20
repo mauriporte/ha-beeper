@@ -37,6 +37,7 @@ const STYLE = `
   audio.media { width: 260px; max-width: 100%; height: 40px; background: none; }
   .file { display: inline-block; margin: 4px 0; }
   .reel-btn { display: block; margin: 6px 0 2px; padding: 6px 12px; font-size: .9em; }
+  .map { display: block; margin: 6px 0; width: 100%; max-width: 420px; height: 300px; border: 0; border-radius: 8px; }
   video.reel { max-width: 360px; max-height: 560px; background: #000; }
   .msg blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid currentColor; opacity: .85; }
   .msg p { margin: 0 0 4px; }
@@ -157,6 +158,51 @@ function reelPlayer(post, hass) {
     v.src = `${base}/vault-img/${encodeURIComponent(helper.key)}/reel/${encodeURIComponent(post.code)}`;
     v.addEventListener("error", () => v.replaceWith(el("div", "time", "No se pudo reproducir (¿cuenta privada?). Abre el enlace en Instagram.")), { once: true });
     btn.replaceWith(v);
+  }, { once: true });
+  return btn;
+}
+
+// Google Maps links: Google's keyless map embed, loaded only when tapped. Full links say the place themselves; share
+// links (maps.app.goo.gl) are looked up once by the same PC helper as the reels (without it they're skipped).
+const GMAPS_RE = /https?:\/\/(?:(?:www\.|maps\.)?google\.[a-z.]+\/maps[^\s<>"']*|maps\.google\.[a-z.]+\/[^\s<>"']*|maps\.app\.goo\.gl\/[\w-]+|goo\.gl\/maps\/[\w-]+)/gi;
+
+function mapEmbed(url) {  // same rules as the PC helper (links.py maps_embed_url)
+  let u;
+  try { u = new URL(url); } catch { return ""; }
+  const coords = u.pathname.match(/@(-?\d+\.\d+),(-?\d+\.\d+)(?:,(\d+(?:\.\d+)?)z)?/);
+  const place = u.pathname.match(/\/maps\/(?:place|search)\/([^/@]+)/);
+  const q = u.searchParams.get("query") || u.searchParams.get("q")
+    || (place ? decodeURIComponent(place[1].replace(/\+/g, " ")) : "") || (coords ? `${coords[1]},${coords[2]}` : "");
+  if (!q || /\/maps\/dir\//.test(u.pathname)) return "";
+  const z = coords?.[3] ? Math.round(+coords[3]) : 15;
+  return `https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=${z}&output=embed`;
+}
+
+function mapLinks(text) {
+  const out = new Map();
+  for (const m of text.matchAll(GMAPS_RE)) {
+    const url = m[0].replace(/[).,!?;:]+$/, "");
+    out.set(url, /goo\.gl/i.test(url) ? "short" : mapEmbed(url));
+  }
+  return [...out].filter(([, e]) => e);
+}
+
+function mapPlayer(url, embed, hass) {
+  let src = embed;
+  if (embed === "short") {
+    const helper = hass.states["sensor.vault_images"]?.attributes;
+    if (!helper?.key) return null;
+    const base = location.protocol === "https:" ? "" : (helper.lan || "");
+    src = `${base}/vault-img/${encodeURIComponent(helper.key)}/maps?u=${encodeURIComponent(url)}`;
+  }
+  const btn = el("button", "reel-btn", "🗺 Ver mapa");
+  btn.addEventListener("click", () => {
+    const f = el("iframe", "map");
+    f.src = src;
+    f.loading = "lazy";
+    f.referrerPolicy = "no-referrer-when-downgrade";
+    f.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox");
+    btn.replaceWith(f);
   }, { once: true });
   return btn;
 }
@@ -321,6 +367,7 @@ class BeeperChatCard extends HTMLElement {
       if (m.text) {
         b.appendChild(richText(m.text));
         for (const post of instagramPosts(m.text)) { const p = reelPlayer(post, this._hass); if (p) b.appendChild(p); }
+        for (const [url, embed] of mapLinks(m.text)) { const p = mapPlayer(url, embed, this._hass); if (p) b.appendChild(p); }
       }
       b.appendChild(el("div", "time", fmtTime(m.time) + (m.mine && m.status && m.status !== "SUCCESS" ? " · " + m.status.toLowerCase() : "")));
       this._msgs.appendChild(b);
