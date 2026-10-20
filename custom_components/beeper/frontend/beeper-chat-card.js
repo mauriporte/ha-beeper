@@ -1,6 +1,8 @@
 // Beeper chat card: chat list + conversation + reply box, talking to the beeper integration over HA's WebSocket.
 // Message text and titles always go through textContent (never innerHTML): they come from other people.
 // Links are built as <a> elements (http/https only) and media load through the integration's signed asset URLs.
+// Formatting: HTML messages are parsed inert (DOMParser runs nothing) and only an allowlist of tags is rebuilt, with no
+// attributes except a checked href; plain messages get WhatsApp-style *bold* _italic_ ~strike~ `code`.
 
 const NETWORK_ICONS = {
   whatsapp: "mdi:whatsapp", telegram: "mdi:send", signal: "mdi:message-lock", instagram: "mdi:instagram",
@@ -34,6 +36,11 @@ const STYLE = `
   .media.sticker { max-height: 140px; background: none; }
   audio.media { width: 260px; max-width: 100%; height: 40px; background: none; }
   .file { display: inline-block; margin: 4px 0; }
+  .msg blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid currentColor; opacity: .85; }
+  .msg p { margin: 0 0 4px; }
+  .msg ul, .msg ol { margin: 2px 0; padding-left: 20px; }
+  .msg code, .msg pre { font-family: var(--code-font-family, monospace); font-size: .9em; background: rgba(127,127,127,.2); border-radius: 4px; padding: 0 3px; }
+  .msg pre { padding: 4px 6px; white-space: pre-wrap; }
   .more { align-self: center; }
   .compose { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--divider-color); }
   textarea { flex: 1; resize: none; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
@@ -59,23 +66,68 @@ function el(tag, cls, text) {
 
 const URL_RE = /https?:\/\/[^\s<>"']+/g;
 
-// Text with its web addresses as clickable links (built as elements, never as HTML).
-function textWithLinks(text) {
-  const box = el("div");
+// Safe rich text: these tags are rebuilt (no attributes, except a checked href on <a>); unknown tags are unwrapped,
+// dangerous ones dropped with their content.
+const KEEP = new Set(["B", "STRONG", "I", "EM", "U", "S", "DEL", "STRIKE", "CODE", "PRE", "BLOCKQUOTE", "P", "BR", "UL", "OL", "LI", "A"]);
+const DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE", "NOSCRIPT", "IMG", "VIDEO", "AUDIO", "FORM", "INPUT", "BUTTON", "TEXTAREA", "SELECT", "LINK", "META"]);
+const HTML_RE = /<\/?(strong|b|em|i|u|s|del|strike|code|pre|blockquote|p|br|ul|ol|li|a|span|div)\b[^>]*>/i;
+
+function link(url, label) {
+  const a = el("a", null, label ?? url);
+  if (/^https?:\/\//i.test(url)) { a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+  return a;
+}
+
+function rebuild(node, out, inLink) {
+  for (const n of node.childNodes) {
+    if (n.nodeType === Node.TEXT_NODE) { out.append(inLink ? n.textContent : linkified(n.textContent)); continue; }
+    if (n.nodeType !== Node.ELEMENT_NODE || DROP.has(n.tagName)) continue;
+    if (!KEEP.has(n.tagName)) { rebuild(n, out, inLink); continue; }  // e.g. <span>, <div>: keep the content only
+    if (n.tagName === "A") {
+      const a = link(n.getAttribute("href") || "", "");
+      rebuild(n, a, true);
+      out.append(a);
+      continue;
+    }
+    const e = document.createElement(n.tagName);
+    rebuild(n, e, inLink);
+    out.append(e);
+  }
+}
+
+// Plain text: links, then *bold* _italic_ ~strike~ `code` (WhatsApp style) and **bold** around them.
+const MARK_RE = /(?<![\p{L}\p{N}_*~`])(\*\*[^*\n]+\*\*|\*[^*\s](?:[^*\n]*[^*\s])?\*|_[^_\s](?:[^_\n]*[^_\s])?_|~[^~\s](?:[^~\n]*[^~\s])?~|`[^`\n]+`)(?![\p{L}\p{N}_*~`])/u;  // only at word edges, like WhatsApp
+const MARK_TAG = { "**": "strong", "*": "strong", "_": "em", "~": "s", "`": "code" };
+
+function marked(text) {
+  const frag = document.createDocumentFragment();
+  for (const part of text.split(MARK_RE)) {
+    if (!part) continue;
+    const m = part.match(/^(\*\*|\*|_|~|`)([\s\S]+)\1$/);
+    if (m && MARK_RE.test(part)) { const e = el(MARK_TAG[m[1]], null, m[2]); frag.append(e); }
+    else frag.append(part);
+  }
+  return frag;
+}
+
+function linkified(text) {
+  const frag = document.createDocumentFragment();
   let last = 0;
   for (const m of text.matchAll(URL_RE)) {
     let url = m[0];
-    const trail = url.match(/[).,!?;:]+$/);  // "see https://x.com." → the dot is not part of the link
+    const trail = url.match(/[).,!?;:]+$/);
     if (trail) url = url.slice(0, -trail[0].length);
-    box.append(text.slice(last, m.index));
-    const a = el("a", null, url);
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    box.append(a);
+    frag.append(marked(text.slice(last, m.index)), link(url));
     last = m.index + url.length;
   }
-  box.append(text.slice(last));
+  frag.append(marked(text.slice(last)));
+  return frag;
+}
+
+function richText(text) {
+  const box = el("div");
+  if (HTML_RE.test(text)) rebuild(new DOMParser().parseFromString(text, "text/html").body, box, false);
+  else box.append(linkified(text));
   return box;
 }
 
@@ -236,7 +288,7 @@ class BeeperChatCard extends HTMLElement {
       const b = el("div", "msg" + (m.mine ? " mine" : ""));
       if (group && !m.mine) b.appendChild(el("div", "sender", m.sender || ""));
       for (const a of m.attachments || []) b.appendChild(this._media(a));
-      if (m.text) b.appendChild(textWithLinks(m.text));
+      if (m.text) b.appendChild(richText(m.text));
       b.appendChild(el("div", "time", fmtTime(m.time) + (m.mine && m.status && m.status !== "SUCCESS" ? " · " + m.status.toLowerCase() : "")));
       this._msgs.appendChild(b);
     }

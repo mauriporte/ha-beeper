@@ -11,7 +11,9 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
 - **Action `beeper.send_message`**: `chat` (title as shown in Beeper, or chat ID) and `message`.
 - **Card `custom:beeper-chat-card`**: chat list, conversation and reply box. It loads automatically; there is no resource to add. Options: `height` (default `560px`), `show_archived` (default `false`), `show_muted` (default `true`).
   Images, GIFs, stickers, videos and voice notes show inside the messages (a tap on an image opens it full size), and
-  web addresses are clickable. Message text is never rendered as HTML: it comes from other people.
+  web addresses are clickable. Formatting shows too: bold, italic, underline, strikethrough, code, quotes and lists,
+  from HTML messages (only those tags are rebuilt, without attributes, and only http/https links; scripts, images,
+  styles and frames inside a message are dropped) and from WhatsApp-style `*bold*` `_italic_` `~strike~` `` `code` ``.
 
 The card and its WebSocket commands are available to admin users only, because they can read and send in every chat.
 Media go through `/api/beeper/asset`, also admin-only and loaded with short-lived signed URLs; it only serves
@@ -49,5 +51,5 @@ actions:
 ## Limits
 
 - Attachments are shown, not sent: only text can be sent from Home Assistant. Media need Beeper Desktop running (they
-  stream from it). Formatting (bold, lists) is shown as plain text.
+  stream from it).
 - The Beeper Desktop API is new and its WebSocket is marked experimental: a Beeper update may break this integration.
