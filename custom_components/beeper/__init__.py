@@ -250,7 +250,9 @@ class BeeperAssetView(HomeAssistantView):
             for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
                 if h in upstream.headers:
                     resp.headers[h] = upstream.headers[h]
-            if (mime := coordinator.assets[url]) and resp.headers.get("Content-Type", "").startswith("application/octet-stream"):
+            # Beeper Desktop sends no type (or a generic one): use the message's, so browsers render and play it
+            ct = resp.headers.get("Content-Type", "")
+            if (mime := coordinator.assets[url]) and (not ct or ct.startswith(("application/octet-stream", "application/binary"))):
                 resp.headers["Content-Type"] = mime
             resp.headers["Cache-Control"] = "private, max-age=86400"
             resp.headers["X-Content-Type-Options"] = "nosniff"
