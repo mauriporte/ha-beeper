@@ -48,5 +48,6 @@ actions:
 
 ## Limits
 
-- Attachments show as `[image]`, `[video]`, etc.; only text is displayed and sent.
+- Attachments are shown, not sent: only text can be sent from Home Assistant. Media need Beeper Desktop running (they
+  stream from it). Formatting (bold, lists) is shown as plain text.
 - The Beeper Desktop API is new and its WebSocket is marked experimental: a Beeper update may break this integration.
