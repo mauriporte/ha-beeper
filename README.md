@@ -14,6 +14,9 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
   web addresses are clickable. Formatting shows too: bold, italic, underline, strikethrough, code, quotes and lists,
   from HTML messages (only those tags are rebuilt, without attributes, and only http/https links; scripts, images,
   styles and frames inside a message are dropped) and from WhatsApp-style `*bold*` `_italic_` `~strike~` `` `code` ``.
+  Instagram reel/post links get a "▶ Ver reel" button that plays the video inline when a helper resolves the public
+  video file (optional: an entity `sensor.vault_images` with `key` and `lan` attributes, serving
+  `/vault-img/<key>/reel/<code>`; see instagram-saved-to-obsidian). Without it the link just opens Instagram.
 
 The card and its WebSocket commands are available to admin users only, because they can read and send in every chat.
 Media go through `/api/beeper/asset`, also admin-only and loaded with short-lived signed URLs; it only serves

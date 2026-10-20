@@ -36,6 +36,8 @@ const STYLE = `
   .media.sticker { max-height: 140px; background: none; }
   audio.media { width: 260px; max-width: 100%; height: 40px; background: none; }
   .file { display: inline-block; margin: 4px 0; }
+  .reel-btn { display: block; margin: 6px 0 2px; padding: 6px 12px; font-size: .9em; }
+  video.reel { max-width: 360px; max-height: 560px; background: #000; }
   .msg blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid currentColor; opacity: .85; }
   .msg p { margin: 0 0 4px; }
   .msg ul, .msg ol { margin: 2px 0; padding-left: 20px; }
@@ -129,6 +131,34 @@ function richText(text) {
   if (HTML_RE.test(text)) rebuild(new DOMParser().parseFromString(text, "text/html").body, box, false);
   else box.append(linkified(text));
   return box;
+}
+
+// Instagram reels/posts linked in a message, played inline. Instagram's own embed won't play reels (it sends you to
+// the app), so the video comes from an optional helper on the PC that resolves the public video file: the
+// `sensor.vault_images` entity gives its key and LAN address (https pages use the same origin's /vault-img route).
+// Without that helper the button is not shown and the link opens Instagram as usual. Loaded only when tapped.
+const IG_RE = /https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(reels?|p|tv)\/([\w-]{5,})/gi;
+
+function instagramPosts(text) {
+  const seen = new Map();
+  for (const m of text.matchAll(IG_RE)) seen.set(m[2], m[1].toLowerCase().startsWith("reel") ? "reel" : "p");
+  return [...seen].map(([code, kind]) => ({ code, kind }));
+}
+
+function reelPlayer(post, hass) {
+  const helper = hass.states["sensor.vault_images"]?.attributes;
+  if (!helper?.key) return null;
+  const base = location.protocol === "https:" ? "" : (helper.lan || "");
+  const btn = el("button", "reel-btn", post.kind === "reel" ? "▶ Ver reel" : "▶ Ver vídeo");
+  btn.addEventListener("click", () => {
+    const v = el("video", "media reel");
+    v.controls = v.autoplay = v.playsInline = true;
+    v.preload = "auto";
+    v.src = `${base}/vault-img/${encodeURIComponent(helper.key)}/reel/${encodeURIComponent(post.code)}`;
+    v.addEventListener("error", () => v.replaceWith(el("div", "time", "No se pudo reproducir (¿cuenta privada?). Abre el enlace en Instagram.")), { once: true });
+    btn.replaceWith(v);
+  }, { once: true });
+  return btn;
 }
 
 function fmtTime(iso) {
@@ -288,7 +318,10 @@ class BeeperChatCard extends HTMLElement {
       const b = el("div", "msg" + (m.mine ? " mine" : ""));
       if (group && !m.mine) b.appendChild(el("div", "sender", m.sender || ""));
       for (const a of m.attachments || []) b.appendChild(this._media(a));
-      if (m.text) b.appendChild(richText(m.text));
+      if (m.text) {
+        b.appendChild(richText(m.text));
+        for (const post of instagramPosts(m.text)) { const p = reelPlayer(post, this._hass); if (p) b.appendChild(p); }
+      }
       b.appendChild(el("div", "time", fmtTime(m.time) + (m.mine && m.status && m.status !== "SUCCESS" ? " · " + m.status.toLowerCase() : "")));
       this._msgs.appendChild(b);
     }
