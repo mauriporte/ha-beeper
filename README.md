@@ -16,7 +16,8 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
   styles and frames inside a message are dropped) and from WhatsApp-style `*bold*` `_italic_` `~strike~` `` `code` ``.
   Instagram reel/post links get a "▶ Ver reel" button that plays the video inline when a helper resolves the public
   video file (optional: an entity `sensor.vault_images` with `key` and `lan` attributes, serving
-  `/vault-img/<key>/reel/<code>`; see instagram-saved-to-obsidian). Without it the link just opens Instagram.
+  `/vault-img/<key>/reel/<code>`; for example
+  [vault_files_server.py](https://github.com/mauriporte/homelab-ha-fullinstall/tree/main/modules/notes-vault-patches)). Without it the link just opens Instagram.
   Google Maps links show a small map under the message, like WhatsApp (Google's keyless embed, loaded as it scrolls
   into view; a tap opens Google Maps) (share
   links like maps.app.goo.gl need the same helper, at `/vault-img/<key>/maps?u=<link>`).
