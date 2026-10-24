@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections import deque
 from datetime import timedelta
 from pathlib import Path
@@ -20,7 +21,17 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import AuthError, BeeperClient, BeeperError, _message_text, summarize_chat, summarize_message
+from .api import (
+    VOICE_MAX_BYTES,
+    AuthError,
+    BeeperClient,
+    BeeperError,
+    UnreachableError,
+    _message_text,
+    summarize_chat,
+    summarize_message,
+    voice_mime,
+)
 
 DOMAIN = "beeper"
 PLATFORMS = [Platform.SENSOR]
@@ -117,6 +128,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     for cmd in (ws_chats, ws_messages, ws_send, ws_mark_read):
         websocket_api.async_register_command(hass, cmd)
     hass.http.register_view(BeeperAssetView())
+    hass.http.register_view(BeeperVoiceView())
 
     async def send_message(call: ServiceCall) -> ServiceResponse:
         coordinator = _coordinator(hass)
@@ -265,3 +277,73 @@ class BeeperAssetView(HomeAssistantView):
             return resp
         finally:
             upstream.release()
+
+
+class BeeperVoiceView(HomeAssistantView):
+    """Sends a voice note recorded on the watch: multipart `chat_id`, `file` (the audio), optional `duration`, `mime`.
+
+    Admins only, like the card. Only audio bytes are accepted (never a path or URL), up to 5 MB, from a MIME allowlist;
+    the file name sent to Beeper is ours. Answers {chat_id, pending_message_id}, or {message, code} on errors.
+    """
+
+    url = "/api/beeper/voice"
+    name = "api:beeper:voice"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        user = request.get("hass_user")
+        if user is None or not user.is_admin:
+            return self.json_message("Admin only", 403, "forbidden")
+        if request.content_type != "multipart/form-data":
+            return self.json_message("Expected multipart/form-data", 400, "invalid_request")
+        fields: dict[str, str] = {}
+        audio: bytes | None = None
+        part_mime = None
+        try:
+            reader = await request.multipart()
+            while (part := await reader.next()) is not None:
+                name = getattr(part, "name", None)  # a nested multipart has no name: skipped below
+                if name == "file":
+                    data = bytearray()
+                    while chunk := await part.read_chunk(64 * 1024):
+                        data += chunk
+                        if len(data) > VOICE_MAX_BYTES:
+                            return self.json_message("Voice note larger than 5 MB", 413, "too_large")
+                    audio, part_mime = bytes(data), part.headers.get("Content-Type")
+                elif name in ("chat_id", "duration", "mime"):
+                    fields[name] = (await part.read(decode=True))[:512].decode("utf-8", "replace").strip()
+                else:
+                    await part.release()
+        except (ValueError, AssertionError) as err:
+            return self.json_message(f"Malformed multipart body: {err}", 400, "invalid_request")
+
+        if not (chat_id := fields.get("chat_id")):
+            return self.json_message("chat_id is required", 400, "invalid_request")
+        if not audio:
+            return self.json_message("file is required", 400, "invalid_request")
+        if (mime := voice_mime(fields.get("mime") or part_mime)) is None:
+            return self.json_message("Unsupported audio type", 400, "unsupported_media")
+        duration = None
+        if fields.get("duration"):
+            try:
+                duration = float(fields["duration"])
+            except ValueError:
+                duration = math.nan
+            if not math.isfinite(duration) or duration < 0:
+                return self.json_message("duration must be a number of seconds", 400, "invalid_request")
+
+        try:
+            coordinator = _coordinator(request.app["hass"])
+        except HomeAssistantError:
+            return self.json_message("Beeper is not loaded", 503, "beeper_unavailable")
+        if coordinator.chat(chat_id) is None:
+            return self.json_message("Unknown chat_id", 404, "unknown_chat")
+        try:
+            result = await coordinator.client.send_voice_note(chat_id, audio, mime, duration)
+        except UnreachableError as err:
+            return self.json_message(str(err), 503, "beeper_unavailable")
+        except AuthError as err:
+            return self.json_message(str(err), 502, "beeper_auth_failed")
+        except BeeperError as err:
+            return self.json_message(str(err), 502, "beeper_error")
+        return self.json({"chat_id": chat_id, "pending_message_id": (result or {}).get("pendingMessageID")})

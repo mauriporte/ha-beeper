@@ -22,6 +22,22 @@ class AuthError(BeeperError):
     """The access token was refused."""
 
 
+class UnreachableError(BeeperError):
+    """Beeper Desktop is not running or not reachable."""
+
+
+# Voice notes the watch may send, by MIME type -> file extension. The file name is always ours, never the client's.
+VOICE_MIME_EXT = {"audio/ogg": "ogg", "audio/opus": "opus", "audio/webm": "webm",
+                  "audio/mp4": "m4a", "audio/aac": "aac", "audio/mpeg": "mp3"}
+VOICE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def voice_mime(mime: str | None) -> str | None:
+    """The allowed base MIME type ("audio/ogg; codecs=opus" -> "audio/ogg"), or None if not allowed."""
+    base = (mime or "").split(";")[0].strip().lower()
+    return base if base in VOICE_MIME_EXT else None
+
+
 class BeeperClient:
     def __init__(self, session: aiohttp.ClientSession, url: str, token: str) -> None:
         self._session = session
@@ -39,7 +55,7 @@ class BeeperClient:
                     raise BeeperError(f"{method} {path}: HTTP {resp.status} {(await resp.text())[:200]}")
                 return await resp.json(content_type=None) if resp.content_length != 0 else None
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise BeeperError(f"Cannot reach Beeper Desktop at {self.url}: {err}") from err
+            raise UnreachableError(f"Cannot reach Beeper Desktop at {self.url}: {err}") from err
 
     async def info(self) -> dict:
         return await self._request("GET", "/v1/info")
@@ -61,6 +77,22 @@ class BeeperClient:
             body["replyToMessageID"] = reply_to
         return await self._request("POST", f"/v1/chats/{_q(chat_id)}/messages", json=body)
 
+    async def send_voice_note(self, chat_id: str, audio: bytes, mime: str, duration: float | None = None) -> dict:
+        """Upload a recorded voice note (/v1/assets/upload) and send it to the chat, with no text."""
+        file_name = f"voice-note.{VOICE_MIME_EXT[mime]}"
+        form = aiohttp.FormData()
+        form.add_field("file", audio, filename=file_name, content_type=mime)
+        form.add_field("fileName", file_name)
+        form.add_field("mimeType", mime)
+        upload = await self._request("POST", "/v1/assets/upload", data=form) or {}
+        if not upload.get("uploadID"):
+            raise BeeperError(f"Beeper Desktop returned no uploadID: {str(upload)[:200]}")
+        attachment: dict[str, Any] = {"uploadID": upload["uploadID"], "mimeType": mime, "fileName": file_name,
+                                      "type": "voice-note"}
+        if (duration := upload.get("duration") or duration) is not None:
+            attachment["duration"] = duration
+        return await self._request("POST", f"/v1/chats/{_q(chat_id)}/messages", json={"attachment": attachment})
+
     async def serve(self, url: str, range_header: str | None = None) -> aiohttp.ClientResponse:
         """Open a stream of an attachment (Beeper Desktop's /v1/assets/serve); the caller must release() it."""
         headers = dict(self._headers)
@@ -70,7 +102,7 @@ class BeeperClient:
             resp = await self._session.get(self.url + "/v1/assets/serve", params={"url": url}, headers=headers,
                                            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60))
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise BeeperError(f"Cannot reach Beeper Desktop at {self.url}: {err}") from err
+            raise UnreachableError(f"Cannot reach Beeper Desktop at {self.url}: {err}") from err
         if resp.status == 401:
             resp.release()
             raise AuthError("Beeper refused the access token")

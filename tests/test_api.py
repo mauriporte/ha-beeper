@@ -42,3 +42,47 @@ def test_message_attachments_are_listed_and_unsafe_urls_dropped():
 def test_message_without_attachments_keeps_placeholder():
     s = api.summarize_message({"id": "8", "type": "IMAGE", "text": ""})
     assert s["attachments"] == [] and s["text"] == "[image]"
+
+
+def test_voice_mime_allowlist():
+    assert api.voice_mime("audio/ogg; codecs=opus") == "audio/ogg"
+    assert api.voice_mime("Audio/MP4") == "audio/mp4"
+    for bad in (None, "", "audio/wav", "video/webm", "text/html", "../audio/ogg"):
+        assert api.voice_mime(bad) is None
+
+
+class _FakeResp:
+    def __init__(self, body):
+        self.status, self.content_length, self._body = 200, None, body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def json(self, content_type=None):
+        return self._body
+
+
+class _FakeSession:
+    def __init__(self, *bodies):
+        self.calls, self._bodies = [], list(bodies)
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        return _FakeResp(self._bodies.pop(0))
+
+
+def test_send_voice_note_uploads_then_sends_attachment():
+    import asyncio
+
+    session = _FakeSession({"uploadID": "u1", "duration": 3.5}, {"pendingMessageID": "p1"})
+    client = api.BeeperClient(session, "http://pc:23373/", "t")
+    result = asyncio.run(client.send_voice_note("!c:x", b"OggS", "audio/ogg", duration=4))
+    assert result == {"pendingMessageID": "p1"}
+    (m1, u1, k1), (m2, u2, k2) = session.calls
+    assert (m1, u1) == ("POST", "http://pc:23373/v1/assets/upload") and isinstance(k1["data"], api.aiohttp.FormData)
+    assert (m2, u2) == ("POST", "http://pc:23373/v1/chats/%21c%3Ax/messages")
+    assert k2["json"] == {"attachment": {"uploadID": "u1", "mimeType": "audio/ogg", "fileName": "voice-note.ogg",
+                                         "type": "voice-note", "duration": 3.5}}

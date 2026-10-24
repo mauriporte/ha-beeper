@@ -27,6 +27,20 @@ Media go through `/api/beeper/asset`, also admin-only and loaded with short-live
 attachments of messages the card has loaded (never arbitrary files from the PC running Beeper Desktop), and sends them
 with a sandbox Content-Security-Policy.
 
+**Voice notes (`POST /api/beeper/voice`, admin only)**, for a watch or phone app that records audio. Send
+`multipart/form-data` with `chat_id` (required; must be a chat the integration knows), `file` (required, the audio
+bytes, at most 5 MB), `duration` (optional, seconds) and `mime` (optional; else the file part's type). Allowed types:
+`audio/ogg`, `audio/opus`, `audio/webm`, `audio/mp4`, `audio/aac`, `audio/mpeg`. The file is uploaded to Beeper Desktop
+and sent as a voice note, without text. Answer: `{"chat_id": ..., "pending_message_id": ...}`; errors are
+`{"message": ..., "code": ...}` with `invalid_request` / `unsupported_media` (400), `forbidden` (403),
+`unknown_chat` (404), `too_large` (413), `beeper_error` / `beeper_auth_failed` (502) or `beeper_unavailable` (503,
+Beeper Desktop not running).
+
+```sh
+curl -X POST https://<home assistant>/api/beeper/voice -H "Authorization: Bearer <admin token>" \
+  -F chat_id='<chat id>' -F duration=4.2 -F 'file=@note.ogg;type=audio/ogg'
+```
+
 ## Setup
 
 1. In Beeper Desktop: **Settings → Developers**. Enable the Desktop API and create an access token with read and write access.
@@ -57,6 +71,6 @@ actions:
 
 ## Limits
 
-- Attachments are shown, not sent: only text can be sent from Home Assistant. Media need Beeper Desktop running (they
-  stream from it).
+- Only text and voice notes can be sent from Home Assistant; other attachments are shown, not sent. Media need Beeper
+  Desktop running (they stream from it).
 - The Beeper Desktop API is new and its WebSocket is marked experimental: a Beeper update may break this integration.
