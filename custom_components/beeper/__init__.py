@@ -12,7 +12,7 @@ import voluptuous as vol
 from aiohttp import web
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import HomeAssistantView, StaticPathConfig
+from homeassistant.components.http import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
@@ -119,9 +119,24 @@ def _coordinator(hass: HomeAssistant) -> BeeperCoordinator:
     return entries[0].runtime_data
 
 
+class BeeperCardView(HomeAssistantView):
+    """The chat card's JS with Cache-Control: no-cache. The ?v= in the URL is only read at HA start, so a card
+    updated afterwards kept the old URL, and browsers kept running the old copy (heuristic caching) until HA restarted."""
+
+    url = CARD_URL
+    name = "beeper:card"
+    requires_auth = False  # loaded as a <script> before login, like any frontend resource
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    async def get(self, request: web.Request) -> web.FileResponse:
+        return web.FileResponse(self._path, headers={"Cache-Control": "no-cache", "Content-Type": "text/javascript"})
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     card = Path(__file__).parent / "frontend" / "beeper-chat-card.js"
-    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(card), False)])
+    hass.http.register_view(BeeperCardView(card))
     # The file's mtime in the URL makes browsers and the mobile apps fetch the card again after an update.
     mtime = await hass.async_add_executor_job(lambda: int(card.stat().st_mtime))
     add_extra_js_url(hass, f"{CARD_URL}?v={mtime}")
