@@ -280,11 +280,13 @@ class BeeperAssetView(HomeAssistantView):
 
 
 async def webm_to_ogg(audio: bytes) -> bytes | None:
-    """Chrome/Vivaldi can only record WebM; WhatsApp only delivers OGG voice notes. Both hold the same Opus audio,
-    so ffmpeg just swaps the container (no re-encoding). None if ffmpeg is missing or fails."""
+    """Chrome/Vivaldi can only record WebM; WhatsApp only plays clean OGG/Opus voice notes. Just re-wrapping the
+    Opus audio kept Chrome's negative start time and WhatsApp refused to play it, so ffmpeg re-encodes it as a
+    voice note (mono Opus 32 kb/s, 48 kHz). None if ffmpeg is missing or fails."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-map", "0:a:0", "-c:a", "copy",
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-map", "0:a:0", "-ac", "1", "-ar", "48000",
+            "-c:a", "libopus", "-b:a", "32k", "-application", "voip", "-avoid_negative_ts", "make_zero",
             "-f", "ogg", "pipe:1", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(audio), timeout=30)
