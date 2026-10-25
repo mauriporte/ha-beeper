@@ -462,11 +462,12 @@ class BeeperChatCard extends HTMLElement {
   async _toggleRecording() {
     if (this._recorder) return this._stopRecording(true);
     if (!this._chatId) return;
+    // mic problems go in the reply box next to the button: an error at the top of the (scrolled-down) list isn't seen
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      this._msgError = window.isSecureContext
+      this._input.placeholder = window.isSecureContext
         ? "Este navegador o esta app no permite grabar audio aquí; prueba en Chrome, Vivaldi o Firefox."
-        : "Para grabar hace falta abrir esta página por https (o en localhost).";
-      return this._renderConversation();
+        : `El micrófono solo funciona por https: abre HA con su dirección https (no ${location.origin}).`;
+      return;
     }
     let stream;
     // the first time, the browser asks for the microphone; say so, or the button looks dead while it waits
@@ -478,13 +479,14 @@ class BeeperChatCard extends HTMLElement {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      this._msgError = err.name === "NotAllowedError"
+      clearTimeout(hint);
+      this._input.placeholder = err.name === "NotAllowedError"
         ? "El micrófono está bloqueado para esta página: permítelo en el candado de la barra de direcciones y vuelve a pulsar 🎤."
         : "Sin acceso al micrófono: " + (err.message || err);
-      return this._renderConversation();
+      return;
     } finally {
       clearTimeout(hint);
-      this._input.placeholder = placeholder;
+      if (stream) this._input.placeholder = placeholder;
       this._mic.textContent = "🎤";
       this._mic.title = "Grabar nota de voz (otra vez para enviarla)";
     }
