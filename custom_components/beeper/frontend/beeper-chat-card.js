@@ -469,12 +469,23 @@ class BeeperChatCard extends HTMLElement {
       return this._renderConversation();
     }
     let stream;
+    // the first time, the browser asks for the microphone; say so, or the button looks dead while it waits
+    this._mic.textContent = "⏳";
+    this._mic.title = "Acepta el permiso del micrófono en el navegador";
+    const hint = setTimeout(() => { this._msgError = "Acepta el permiso del micrófono en el navegador (aviso junto a la barra de direcciones)."; this._renderConversation(); }, 1200);
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      this._msgError = "Sin acceso al micrófono: " + (err.message || err);
+      this._msgError = err.name === "NotAllowedError"
+        ? "El micrófono está bloqueado para esta página: permítelo en el candado de la barra de direcciones y vuelve a pulsar 🎤."
+        : "Sin acceso al micrófono: " + (err.message || err);
       return this._renderConversation();
+    } finally {
+      clearTimeout(hint);
+      this._mic.textContent = "🎤";
+      this._mic.title = "Grabar nota de voz (otra vez para enviarla)";
     }
+    if (this._msgError?.startsWith("Acepta el permiso")) { this._msgError = null; this._renderConversation(); }
     const mime = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     const chunks = [], chatId = this._chatId, started = Date.now();
