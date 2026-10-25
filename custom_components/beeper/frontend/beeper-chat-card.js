@@ -372,8 +372,7 @@ class BeeperChatCard extends HTMLElement {
     const canSend = this._chat && !this._chat.read_only;
     this._input.disabled = !canSend;
     this._send.disabled = !canSend;
-    // recording needs a secure page (https or localhost) and a browser with MediaRecorder
-    this._mic.disabled = !canSend || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder;
+    this._mic.disabled = !canSend;  // if this page can't record, clicking says why instead of a silent grey button
     if (!this._chat) { this._msgs.appendChild(el("div", "empty", "Elige un chat")); return; }
     if (this._msgError) this._msgs.appendChild(el("div", "error", this._msgError));
     if (this._hasMore) {
@@ -463,6 +462,12 @@ class BeeperChatCard extends HTMLElement {
   async _toggleRecording() {
     if (this._recorder) return this._stopRecording(true);
     if (!this._chatId) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      this._msgError = window.isSecureContext
+        ? "Este navegador o esta app no permite grabar audio aquí; prueba en Chrome, Vivaldi o Firefox."
+        : "Para grabar hace falta abrir esta página por https (o en localhost).";
+      return this._renderConversation();
+    }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
