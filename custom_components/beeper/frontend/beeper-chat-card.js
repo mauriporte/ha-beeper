@@ -472,7 +472,9 @@ class BeeperChatCard extends HTMLElement {
     // the first time, the browser asks for the microphone; say so, or the button looks dead while it waits
     this._mic.textContent = "⏳";
     this._mic.title = "Acepta el permiso del micrófono en el navegador";
-    const hint = setTimeout(() => { this._msgError = "Acepta el permiso del micrófono en el navegador (aviso junto a la barra de direcciones)."; this._renderConversation(); }, 1200);
+    // the hint goes in the reply box, next to the button: re-drawing the message list would jump the view
+    const placeholder = this._input.placeholder;
+    const hint = setTimeout(() => { this._input.placeholder = "Permite el micrófono: aviso del navegador junto a la barra de direcciones (o en el candado)…"; }, 1200);
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
@@ -482,10 +484,10 @@ class BeeperChatCard extends HTMLElement {
       return this._renderConversation();
     } finally {
       clearTimeout(hint);
+      this._input.placeholder = placeholder;
       this._mic.textContent = "🎤";
       this._mic.title = "Grabar nota de voz (otra vez para enviarla)";
     }
-    if (this._msgError?.startsWith("Acepta el permiso")) { this._msgError = null; this._renderConversation(); }
     const mime = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     const chunks = [], chatId = this._chatId, started = Date.now();
