@@ -51,6 +51,11 @@ const STYLE = `
   textarea { flex: 1; resize: none; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
   button { font: inherit; cursor: pointer; border: none; border-radius: 8px; padding: 0 14px; background: var(--primary-color); color: var(--text-primary-color); }
   button:disabled { opacity: 0.5; cursor: default; }
+  .mic { padding: 0 12px; font-size: 1.1em; }
+  .mic.rec { background: var(--error-color, #db4437); font-size: .9em; font-variant-numeric: tabular-nums; }
+  .cancel { display: none; background: transparent; color: var(--secondary-text-color); padding: 0 8px; }
+  .compose.recording .cancel { display: inline-block; }
+  .compose.recording textarea { opacity: .4; }
   .empty, .error { margin: auto; color: var(--secondary-text-color); padding: 16px; text-align: center; }
   .error { color: var(--error-color); }
   @media (max-width: 700px) {
@@ -250,12 +255,19 @@ class BeeperChatCard extends HTMLElement {
     this._input.rows = 2;
     this._input.placeholder = "Mensaje…";
     this._send = el("button", null, "Enviar");
-    compose.append(this._input, this._send);
+    this._mic = el("button", "mic", "🎤");
+    this._mic.title = "Grabar nota de voz (otra vez para enviarla)";
+    this._cancel = el("button", "cancel", "✕");
+    this._cancel.title = "Descartar la grabación";
+    this._compose = compose;
+    compose.append(this._input, this._cancel, this._mic, this._send);
     conv.append(this._head, this._msgs, compose);
     this._card.append(this._list, conv);
     root.appendChild(this._card);
 
     this._send.addEventListener("click", () => this._sendMessage());
+    this._mic.addEventListener("click", () => this._toggleRecording());
+    this._cancel.addEventListener("click", () => this._stopRecording(false));
     this._input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._sendMessage(); }
     });
@@ -360,6 +372,8 @@ class BeeperChatCard extends HTMLElement {
     const canSend = this._chat && !this._chat.read_only;
     this._input.disabled = !canSend;
     this._send.disabled = !canSend;
+    // recording needs a secure page (https or localhost) and a browser with MediaRecorder
+    this._mic.disabled = !canSend || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder;
     if (!this._chat) { this._msgs.appendChild(el("div", "empty", "Elige un chat")); return; }
     if (this._msgError) this._msgs.appendChild(el("div", "error", this._msgError));
     if (this._hasMore) {
@@ -441,6 +455,75 @@ class BeeperChatCard extends HTMLElement {
       this._sending = false;
       this._send.disabled = false;
       this._input.focus();
+    }
+  }
+
+  // Voice notes: record in the browser, then upload to the integration's POST /api/beeper/voice (the same
+  // endpoint the watch uses), which sends it to the chat as a voice message.
+  async _toggleRecording() {
+    if (this._recorder) return this._stopRecording(true);
+    if (!this._chatId) return;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      this._msgError = "Sin acceso al micrófono: " + (err.message || err);
+      return this._renderConversation();
+    }
+    const mime = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [], chatId = this._chatId, started = Date.now();
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      clearInterval(this._recTimer);
+      this._mic.classList.remove("rec");
+      this._mic.textContent = "🎤";
+      this._compose.classList.remove("recording");
+      const send = this._sendRecording;
+      this._recorder = null;
+      if (send) this._uploadVoice(new Blob(chunks, { type: rec.mimeType || mime }), chatId, (Date.now() - started) / 1000);
+    };
+    this._recorder = rec;
+    this._sendRecording = false;
+    rec.start(1000);
+    this._mic.classList.add("rec");
+    this._compose.classList.add("recording");
+    const tick = () => {
+      const s = Math.floor((Date.now() - started) / 1000);
+      this._mic.textContent = `● ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      if (s >= 300) this._stopRecording(true);  // the integration takes up to 5 MB: stop at 5 minutes
+    };
+    tick();
+    this._recTimer = setInterval(tick, 500);
+  }
+
+  _stopRecording(send) {
+    if (!this._recorder) return;
+    this._sendRecording = send;
+    this._recorder.stop();
+  }
+
+  async _uploadVoice(blob, chatId, duration) {
+    if (!blob.size) return;
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    form.append("duration", duration.toFixed(1));
+    form.append("mime", blob.type.split(";")[0]);
+    form.append("file", blob, "voice." + (blob.type.includes("ogg") ? "ogg" : blob.type.includes("mp4") ? "m4a" : "webm"));
+    this._mic.disabled = true;
+    try {
+      const r = this._hass.fetchWithAuth
+        ? await this._hass.fetchWithAuth("/api/beeper/voice", { method: "POST", body: form })
+        : await fetch("/api/beeper/voice", { method: "POST", body: form,
+                                             headers: { Authorization: "Bearer " + this._hass.auth.data.access_token } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || r.status);
+      setTimeout(() => this._loadMessages(true), 1200);
+    } catch (err) {
+      this._msgError = "No se pudo enviar la nota de voz: " + (err.message || err);
+      this._renderConversation();
+    } finally {
+      this._mic.disabled = false;
     }
   }
 
