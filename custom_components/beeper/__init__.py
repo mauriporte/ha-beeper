@@ -279,6 +279,24 @@ class BeeperAssetView(HomeAssistantView):
             upstream.release()
 
 
+async def webm_to_ogg(audio: bytes) -> bytes | None:
+    """Chrome/Vivaldi can only record WebM; WhatsApp only delivers OGG voice notes. Both hold the same Opus audio,
+    so ffmpeg just swaps the container (no re-encoding). None if ffmpeg is missing or fails."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-map", "0:a:0", "-c:a", "copy",
+            "-f", "ogg", "pipe:1", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(audio), timeout=30)
+    except (OSError, asyncio.TimeoutError) as e:
+        _LOGGER.warning("Voice note: WebM to OGG failed (%s)", e)
+        return None
+    if proc.returncode or not out:
+        _LOGGER.warning("Voice note: WebM to OGG failed: %s", err.decode(errors="replace")[-300:])
+        return None
+    return out
+
+
 class BeeperVoiceView(HomeAssistantView):
     """Sends a voice note recorded on the watch: multipart `chat_id`, `file` (the audio), optional `duration`, `mime`.
 
@@ -338,6 +356,10 @@ class BeeperVoiceView(HomeAssistantView):
             return self.json_message("Beeper is not loaded", 503, "beeper_unavailable")
         if coordinator.chat(chat_id) is None:
             return self.json_message("Unknown chat_id", 404, "unknown_chat")
+        if mime == "audio/webm":  # recorded in a Chromium browser (the card's mic button)
+            if (ogg := await webm_to_ogg(audio)) is None:
+                return self.json_message("Could not convert the WebM recording to OGG", 500, "convert_failed")
+            audio, mime = ogg, "audio/ogg"
         try:
             result = await coordinator.client.send_voice_note(chat_id, audio, mime, duration)
         except UnreachableError as err:
