@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, Supp
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -156,7 +157,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             raise HomeAssistantError(str(err)) from err
         return {"chat_id": chat["id"], "pending_message_id": result.get("pendingMessageID")}
 
-    hass.services.async_register(
+    # Admin only, like the card's WebSocket commands: it sends from the owner's account to any chat. Automations keep working.
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "send_message",
         send_message,

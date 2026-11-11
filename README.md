@@ -8,7 +8,7 @@ Read and reply to your [Beeper](https://www.beeper.com) chats from Home Assistan
 - **Sensor `Unread messages`**: total unread messages in chats that are not muted or archived. Its `chats` attribute lists the 20 most recent unread chats.
 - **One unread sensor per pinned chat**, with the last message as an attribute.
 - **Event `beeper_message`** for each incoming message (`chat`, `chat_id`, `network`, `sender`, `text`, `message_id`). Your own messages do not fire it.
-- **Action `beeper.send_message`**: `chat` (title as shown in Beeper, or chat ID) and `message`.
+- **Action `beeper.send_message`**: `chat` (title as shown in Beeper, or chat ID) and `message`. Admin users only; automations and scripts can always use it.
 - **Card `custom:beeper-chat-card`**: chat list, conversation and reply box. It loads automatically; there is no resource to add. Options: `height` (default `560px`), `show_archived` (default `false`), `show_muted` (default `true`).
   Images, GIFs, stickers, videos and voice notes show inside the messages (a tap on an image opens it full size), and
   web addresses are clickable. Formatting shows too: bold, italic, underline, strikethrough, code, quotes and lists,
@@ -41,6 +41,13 @@ curl -X POST https://<home assistant>/api/beeper/voice -H "Authorization: Bearer
   -F chat_id='<chat id>' -F duration=4.2 -F 'file=@note.ogg;type=audio/ogg'
 ```
 
+## Installation
+
+**HACS (recommended):** in HACS, search for **Beeper**, download it and restart Home Assistant.
+Until it is listed in HACS, add `https://github.com/mauriporte/ha-beeper` as a custom repository (type **Integration**) first.
+
+**Manual:** copy `custom_components/beeper` into your Home Assistant `config/custom_components` and restart.
+
 ## Setup
 
 1. In Beeper Desktop: **Settings → Developers**. Enable the Desktop API and create an access token with read and write access.
@@ -51,7 +58,7 @@ curl -X POST https://<home assistant>/api/beeper/voice -H "Authorization: Bearer
    New-NetFirewallRule -DisplayName "Beeper API (Home Assistant only)" -Direction Inbound -Protocol TCP -LocalAddress <PC IP> -LocalPort 23373 -RemoteAddress <Home Assistant IP> -Action Allow
    ```
 
-3. Copy `custom_components/beeper` into your Home Assistant `config/custom_components`, restart, then add the **Beeper** integration with `http://<PC IP>:23373` and the token.
+3. Add the **Beeper** integration with `http://<PC IP>:23373` and the token.
 
 ## Example automation
 

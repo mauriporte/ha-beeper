@@ -210,7 +210,7 @@ function mapPlayer(url, embed, hass) {
   f.loading = "lazy";
   f.tabIndex = -1;
   f.referrerPolicy = "no-referrer-when-downgrade";
-  f.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  f.setAttribute("sandbox", "allow-scripts");  // never the page's origin: the helper's route is on HA's own origin
   const a = el("a");
   a.href = url;
   a.target = "_blank";
