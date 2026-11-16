@@ -44,7 +44,7 @@ curl -X POST https://<home assistant>/api/beeper/voice -H "Authorization: Bearer
 ## Installation
 
 **HACS (recommended):** in HACS, search for **Beeper**, download it and restart Home Assistant.
-Until it is listed in HACS, add `https://github.com/mauriporte/ha-beeper` as a custom repository (type **Integration**) first.
+If it doesn't show up in the search, add `https://github.com/mauriporte/ha-beeper` as a custom repository (type **Integration**) and download it from there.
 
 **Manual:** copy `custom_components/beeper` into your Home Assistant `config/custom_components` and restart.
 
